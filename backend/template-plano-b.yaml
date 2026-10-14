@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Mural da Turma - API compartilhada (plano B da aula de Cloud).
+  Cria tabela DynamoDB + Lambda + HTTP API com CORS. Saida: ApiUrl.
+  Implante pelo console do CloudFormation (Create stack > Upload a template file).
+
+Parameters:
+  NomeTabela:
+    Type: String
+    Default: Recados
+  RoleArnExistente:
+    Type: String
+    Default: ""
+    Description: >
+      Deixe vazio na sua conta. No AWS Academy Learner Lab informe o ARN da LabRole
+      (arn:aws:iam::<conta>:role/LabRole), pois la nao e permitido criar roles.
+
+Conditions:
+  CriarRole: !Equals [!Ref RoleArnExistente, ""]
+
+Resources:
+  Tabela:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref NomeTabela
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: id, AttributeType: S}
+      KeySchema:
+        - {AttributeName: id, KeyType: HASH}
+
+  RoleLambda:
+    Type: AWS::IAM::Role
+    Condition: CriarRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AcessoTabelaRecados
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:Scan, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:UpdateItem]
+                Resource: !GetAtt Tabela.Arn
+
+  Funcao:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: mural-recados
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Timeout: 10
+      MemorySize: 256
+      Role: !If [CriarRole, !GetAtt RoleLambda.Arn, !Ref RoleArnExistente]
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Tabela
+      Code:
+        ZipFile: |
+          """Mural da Turma - backend serverless (API Gateway HTTP API -> Lambda -> DynamoDB).
+
+          Rotas (configuradas no API Gateway):
+            GET    /recados               -> lista os recados (mais recentes primeiro)
+            POST   /recados               -> cria um recado  {"autor": "...", "texto": "..."}
+            DELETE /recados/{id}          -> apaga um recado
+            POST   /recados/{id}/curtir   -> soma 1 curtida (desafio extra)
+
+          Variavel de ambiente: TABLE_NAME (padrao "Recados"). Chave de particao: id (String).
+          """
+          import json
+          import os
+          import uuid
+          from datetime import datetime, timezone
+          from decimal import Decimal
+
+          import boto3
+
+          TABELA = boto3.resource("dynamodb").Table(os.environ.get("TABLE_NAME", "Recados"))
+
+          CORS = {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+              "Access-Control-Allow-Headers": "Content-Type",
+          }
+
+
+          def resposta(status, corpo=None):
+              def converte(o):  # DynamoDB devolve numeros como Decimal
+                  if isinstance(o, Decimal):
+                      return int(o)
+                  raise TypeError
+              return {
+                  "statusCode": status,
+                  "headers": {"Content-Type": "application/json", **CORS},
+                  "body": "" if corpo is None else json.dumps(corpo, default=converte, ensure_ascii=False),
+              }
+
+
+          def listar():
+              itens = TABELA.scan(Limit=200).get("Items", [])
+              itens.sort(key=lambda r: r.get("criadoEm", ""), reverse=True)
+              return resposta(200, itens)
+
+
+          def criar(evento):
+              try:
+                  dados = json.loads(evento.get("body") or "{}")
+              except json.JSONDecodeError:
+                  return resposta(400, {"erro": "JSON invalido"})
+              autor = str(dados.get("autor", "")).strip()
+              texto = str(dados.get("texto", "")).strip()
+              if not (1 <= len(autor) <= 40) or not (1 <= len(texto) <= 280):
+                  return resposta(400, {"erro": "autor (1-40) e texto (1-280) sao obrigatorios"})
+              recado = {
+                  "id": str(uuid.uuid4()),
+                  "autor": autor,
+                  "texto": texto,
+                  "curtidas": 0,
+                  "criadoEm": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              }
+              TABELA.put_item(Item=recado)
+              return resposta(201, recado)
+
+
+          def apagar(rid):
+              TABELA.delete_item(Key={"id": rid})
+              return resposta(204)
+
+
+          def curtir(rid):
+              try:
+                  r = TABELA.update_item(
+                      Key={"id": rid},
+                      UpdateExpression="ADD curtidas :um",
+                      ConditionExpression="attribute_exists(id)",
+                      ExpressionAttributeValues={":um": 1},
+                      ReturnValues="ALL_NEW",
+                  )
+              except TABELA.meta.client.exceptions.ConditionalCheckFailedException:
+                  return resposta(404, {"erro": "recado nao encontrado"})
+              return resposta(200, r["Attributes"])
+
+
+          def lambda_handler(evento, contexto):
+              metodo = evento["requestContext"]["http"]["method"]
+              partes = [p for p in evento.get("rawPath", "/").split("/") if p]
+              # Com stage nomeado (ex.: /prod/recados) ignoramos o prefixo
+              if partes and partes[0] != "recados":
+                  partes = partes[1:]
+
+              if metodo == "OPTIONS":
+                  return resposta(204)
+              if partes == ["recados"] and metodo == "GET":
+                  return listar()
+              if partes == ["recados"] and metodo == "POST":
+                  return criar(evento)
+              if len(partes) == 2 and partes[0] == "recados" and metodo == "DELETE":
+                  return apagar(partes[1])
+              if len(partes) == 3 and partes[0] == "recados" and partes[2] == "curtir" and metodo == "POST":
+                  return curtir(partes[1])
+              return resposta(404, {"erro": f"rota nao encontrada: {metodo} /{'/'.join(partes)}"})
+
+  Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: mural-api
+      ProtocolType: HTTP
+      Target: !GetAtt Funcao.Arn   # "quick create": rota $default + stage $default
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: [GET, POST, DELETE, OPTIONS]
+        AllowHeaders: [content-type]
+
+  PermissaoApi:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Funcao
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*"
+
+Outputs:
+  ApiUrl:
+    Description: Cole esta URL em lib/config.dart do app Flutter
+    Value: !GetAtt Api.ApiEndpoint
