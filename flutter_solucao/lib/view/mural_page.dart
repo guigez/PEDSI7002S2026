@@ -118,11 +118,29 @@ class _MuralPageState extends State<MuralPage> {
                       ListTile(
                         title: Text(r.texto),
                         subtitle: Text(r.autor),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          // Manda o id do recado; a API usa no DELETE.
-                          onPressed: () =>
-                              context.read<MuralBloc>().add(ApagarRecado(r.id)),
+                        // Row com mainAxisSize.min: sem isso a Row tenta
+                        // ocupar a largura toda e o ListTile dá erro de layout.
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Desafio: coração + contador de curtidas.
+                            IconButton(
+                              icon: const Icon(Icons.favorite_border),
+                              tooltip: 'Curtir',
+                              onPressed: () => context
+                                  .read<MuralBloc>()
+                                  .add(CurtirRecado(r.id)),
+                            ),
+                            Text('${r.curtidas}'),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              tooltip: 'Apagar',
+                              // Manda o id do recado; a API usa no DELETE.
+                              onPressed: () => context
+                                  .read<MuralBloc>()
+                                  .add(ApagarRecado(r.id)),
+                            ),
+                          ],
                         ),
                       ),
                   ],

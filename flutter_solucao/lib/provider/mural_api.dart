@@ -7,6 +7,7 @@
 //   listar()  -> GET    /recados        -> 200 + lista em JSON
 //   criar()   -> POST   /recados        -> 201
 //   apagar()  -> DELETE /recados/{id}   -> 204 (sem corpo)
+//   curtir()  -> POST   /recados/{id}/curtir -> 200 (desafio)
 //
 // Por que Future e não Stream? Cada chamada HTTP é um pedido e UMA resposta.
 // Stream serve quando o dado chega sozinho, várias vezes, sem ninguém pedir.
@@ -24,7 +25,7 @@ import '../models/recado.dart';
 // Invoke URL do API Gateway (Console > API Gateway > sua API > Stages).
 // SEM barra no final: o código já monta '$apiUrl/recados'.
 // Com barra, a URL vira '...com//recados' e o API Gateway responde 404.
-const apiUrl = 'https://SEU-ID.execute-api.us-east-1.amazonaws.com';
+const apiUrl = 'https://nk5fiyaei9.execute-api.us-east-2.amazonaws.com';
 
 class MuralApi {
   /// GET /recados -> 200 com a lista.
@@ -74,6 +75,18 @@ class MuralApi {
 
     // DÚVIDA COMUM: "esperava 200": DELETE bem-sucedido sem corpo devolve 204.
     if (resposta.statusCode != 204) throw Exception('Erro ${resposta.statusCode}');
+  }
+
+  /// POST /recados/{id}/curtir -> 200 (desafio)
+  Future<void> curtir(String id) async {
+    // POST sem corpo: o id na URL já diz qual recado curtir. A Lambda soma 1
+    // no DynamoDB de forma atômica (UpdateExpression "ADD curtidas :um"), então
+    // duas duplas curtindo ao mesmo tempo não perdem nenhuma curtida.
+    final resposta = await http.post(Uri.parse('$apiUrl/recados/$id/curtir'));
+
+    // DÚVIDA COMUM: veio 404 → o recado foi apagado por outra dupla antes do
+    //               clique, ou a rota POST /recados/{id}/curtir não existe.
+    if (resposta.statusCode != 200) throw Exception('Erro ${resposta.statusCode}');
   }
 }
 

@@ -38,6 +38,12 @@ class ApagarRecado extends MuralEvent {
   ApagarRecado(this.id);
 }
 
+/// Usuário clicou no coração de um recado (desafio).
+class CurtirRecado extends MuralEvent {
+  final String id;
+  CurtirRecado(this.id);
+}
+
 // -----------------------------------------------------------------------------
 // ESTADO: tudo o que a tela precisa para se desenhar
 // -----------------------------------------------------------------------------
@@ -65,6 +71,7 @@ class MuralBloc extends Bloc<MuralEvent, MuralState> {
     on<CarregarRecados>(_carregar);
     on<EnviarRecado>(_enviar);
     on<ApagarRecado>(_apagar);
+    on<CurtirRecado>(_curtir);
   }
 
   // Cada handler recebe o evento e um "emit", que publica um novo estado.
@@ -106,6 +113,18 @@ class MuralBloc extends Bloc<MuralEvent, MuralState> {
     // Mesmo padrão do _enviar, chamando apagar().
     try {
       await api.apagar(event.id);
+      add(CarregarRecados());
+    } catch (e) {
+      emit(MuralState(recados: state.recados, erro: '$e'));
+    }
+  }
+
+  Future<void> _curtir(CurtirRecado event, Emitter<MuralState> emit) async {
+    // Mesmo padrão do _apagar: chama a API e recarrega a lista.
+    // Recarregar (em vez de somar 1 na lista local) mostra o número real,
+    // incluindo curtidas que outras duplas deram no mesmo recado.
+    try {
+      await api.curtir(event.id);
       add(CarregarRecados());
     } catch (e) {
       emit(MuralState(recados: state.recados, erro: '$e'));

@@ -7,7 +7,7 @@
 //
 // A Lambda devolve cada recado assim:
 //   {"id": "3f2a...", "autor": "Ana", "texto": "Olá turma!", "curtidas": 0, ...}
-// Campos que o app não usa (ex.: curtidas, criadoEm) são simplesmente ignorados.
+// Campos que o app não usa (ex.: criadoEm) são simplesmente ignorados.
 // =============================================================================
 
 class Recado {
@@ -16,8 +16,14 @@ class Recado {
   final String id; // gerado pela Lambda (uuid); usado no DELETE /recados/{id}
   final String autor;
   final String texto;
+  final int curtidas; // contador do desafio; a Lambda começa em 0
 
-  const Recado({required this.id, required this.autor, required this.texto});
+  const Recado({
+    required this.id,
+    required this.autor,
+    required this.texto,
+    this.curtidas = 0,
+  });
 
   // "factory" é um construtor que pode fazer trabalho antes de criar o objeto.
   // Recebe o Map que o jsonDecode produziu e lê cada chave.
@@ -29,5 +35,9 @@ class Recado {
         id: json['id'] as String,
         autor: json['autor'] as String,
         texto: json['texto'] as String,
+        // curtidas é NÚMERO no JSON. Ler como String dá
+        // "type 'int' is not a subtype of type 'String'".
+        // "as num?" + "?? 0" aceita int, double ou campo ausente sem quebrar.
+        curtidas: (json['curtidas'] as num? ?? 0).toInt(),
       );
 }
